@@ -2,16 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 Sistem de geocodare Origine–Destinație pentru fișiere Excel (.xlsx)
-Versiune: 1.0 — August 2026
+Versiune: 1.1 — August 2026
+Backend: OpenStreetMap Nominatim (gratuit, fără API key)
 
 Funcționalități:
   - File picker grafic (Tkinter)
   - Normalizare adrese românești (abrevieri, diacritice)
   - Detectare adrese ambigue
-  - Geocodare Google Geocoding API cu retry exponențial
+  - Geocodare OpenStreetMap Nominatim cu retry exponențial
   - Caching persistent (JSON) + memorie
   - Checkpointing la fiecare 500 rânduri
-  - Logging complet (DEBUG) cu răspunsuri Google
+  - Logging complet (DEBUG) cu răspunsuri Nominatim
   - Dry run implicit (100 rânduri) și procesare parțială (--start/--end)
 
 Utilizare:
@@ -40,10 +41,13 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # 1. CONSTANTE
 # ---------------------------------------------------------------------------
-GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-RATE_LIMIT_PAUSE = 0.15        # secunde între cereri
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_HEADERS = {
+    "User-Agent": "geocodare-od-script/1.1 (contact@exemplu.ro)",
+}
+RATE_LIMIT_PAUSE = 1.1         # Nominatim: max 1 cerere/secundă (cu marjă)
 RETRY_COUNT = 3
-RETRY_BACKOFF_BASE = 1         # 1s → 2s → 4s
+RETRY_BACKOFF_BASE = 2         # 2s → 4s → 8s
 TIMEOUT_SECONDS = 10
 CHECKPOINT_EVERY = 500
 DEFAULT_DRY_RUN = 100
@@ -261,31 +265,27 @@ def is_ambiguous(address: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 4. GOOGLE GEOCODER
+# 4. NOMINATIM GEOCODER
 # ---------------------------------------------------------------------------
 
-class GoogleGeocoder:
-    """Wrapper peste Google Geocoding API cu retry, backoff, rate limiting."""
+class NominatimGeocoder:
+    """Wrapper peste OpenStreetMap Nominatim cu retry, backoff, rate limiting."""
 
-    def __init__(self, api_key: str, logger: logging.Logger):
-        self.api_key = api_key
+    def __init__(self, logger: logging.Logger):
         self.logger = logger
         self.session = requests.Session()
+        self.session.headers.update(NOMINATIM_HEADERS)
         self._last_request_time = 0.0
 
     def _rate_limit(self):
-        """Respectă pauza minimă între cereri."""
+        """Respectă pauza minimă între cereri (Nominatim: max 1/sec)."""
         elapsed = time.time() - self._last_request_time
         if elapsed < RATE_LIMIT_PAUSE:
             time.sleep(RATE_LIMIT_PAUSE - elapsed)
 
-    def _safe_url(self, address: str) -> str:
-        """Returnează URL-ul fără API key (pentru log)."""
-        return f"{GEOCODE_URL}?address={requests.utils.quote(address)}"
-
     def geocode(self, address: str) -> dict:
         """
-        Geocodează o adresă.
+        Geocodează o adresă cu Nominatim.
         Returnează dict cu: formatted, lat, lon, place_id, error
         """
         result = {
@@ -301,12 +301,14 @@ class GoogleGeocoder:
             return result
 
         params = {
-            "address": address,
-            "key": self.api_key,
+            "q": address,
+            "format": "json",
+            "limit": 1,
+            "addressdetails": 1,
         }
 
-        self.logger.debug("Geocoding: %s", address)
-        self.logger.debug("URL (fără cheie): %s", self._safe_url(address))
+        self.logger.debug("Geocoding (Nominatim): %s", address)
+        self.logger.debug("URL: %s?q=%s", NOMINATIM_URL, requests.utils.quote(address))
 
         last_exception = None
         for attempt in range(RETRY_COUNT):
@@ -315,57 +317,53 @@ class GoogleGeocoder:
                 self._last_request_time = time.time()
 
                 resp = self.session.get(
-                    GEOCODE_URL,
+                    NOMINATIM_URL,
                     params=params,
                     timeout=TIMEOUT_SECONDS,
                 )
+
+                self.logger.debug("HTTP status: %d (attempt %d)",
+                                  resp.status_code, attempt + 1)
+
+                # HTTP 429 = Too Many Requests (rate limit)
+                if resp.status_code == 429:
+                    result["error"] = "RATE_LIMITED"
+                    self.logger.error("HTTP 429 Too Many Requests – rate limited!")
+                    return result
+
+                # HTTP 403 = Forbidden (blocat de Nominatim)
+                if resp.status_code == 403:
+                    result["error"] = "ERROR: FORBIDDEN (403)"
+                    self.logger.error("HTTP 403 Forbidden – posibil blocat de Nominatim")
+                    return result
+
+                resp.raise_for_status()
                 data = resp.json()
 
-                self.logger.debug("Răspuns Google (attempt %d): %s",
+                self.logger.debug("Răspuns Nominatim (attempt %d): %s",
                                   attempt + 1,
                                   json.dumps(data, ensure_ascii=False, indent=2))
 
-                status = data.get("status", "UNKNOWN")
+                if data and isinstance(data, list) and len(data) > 0:
+                    top = data[0]
+                    result["formatted"] = top.get("display_name")
+                    result["lat"] = float(top["lat"]) if top.get("lat") else None
+                    result["lon"] = float(top["lon"]) if top.get("lon") else None
+                    result["place_id"] = str(top.get("osm_id", top.get("place_id", "")))
 
-                if status == "OK" and data.get("results"):
-                    top = data["results"][0]
-                    result["formatted"] = top.get("formatted_address")
-                    loc = top.get("geometry", {}).get("location", {})
-                    result["lat"] = loc.get("lat")
-                    result["lon"] = loc.get("lng")
-                    result["place_id"] = top.get("place_id")
+                    # Verificăm importanța rezultatului (Nominatim)
+                    importance = top.get("importance", 0)
+                    if importance < 0.01:
+                        result["error"] = "WARNING: LowImportance"
+                        self.logger.warning("Importanță scăzută (%.3f) pentru: %s",
+                                            importance, address)
 
-                    # Verifică partial_match
-                    if top.get("partial_match"):
-                        result["error"] = "ERROR: PartialMatch"
-                        self.logger.warning("PartialMatch pentru: %s", address)
-
-                    return result
-
-                elif status == "ZERO_RESULTS":
-                    result["error"] = "ERROR: NotFound"
-                    self.logger.warning("ZERO_RESULTS pentru: %s", address)
-                    return result
-
-                elif status == "OVER_QUERY_LIMIT":
-                    result["error"] = "OVER_QUERY_LIMIT"
-                    self.logger.error("OVER_QUERY_LIMIT! Oprire necesară.")
-                    return result
-
-                elif status == "REQUEST_DENIED":
-                    result["error"] = "ERROR: REQUEST_DENIED"
-                    err_msg = data.get("error_message", "")
-                    self.logger.error("REQUEST_DENIED: %s", err_msg)
-                    return result
-
-                elif status == "INVALID_REQUEST":
-                    result["error"] = "ERROR: INVALID_REQUEST"
-                    self.logger.error("INVALID_REQUEST pentru: %s", address)
                     return result
 
                 else:
-                    result["error"] = f"ERROR: {status}"
-                    self.logger.error("Status necunoscut: %s", status)
+                    # Lista goală = nu s-a găsit
+                    result["error"] = "ERROR: NotFound"
+                    self.logger.warning("ZERO_RESULTS (Nominatim) pentru: %s", address)
                     return result
 
             except requests.exceptions.Timeout:
@@ -479,7 +477,7 @@ def ensure_output_columns(ws, header_row: int) -> dict[str, int]:
 
 def handle_address(
     address_raw: str,
-    geocoder: GoogleGeocoder,
+    geocoder: NominatimGeocoder,
     cache: GeoCache,
     logger: logging.Logger,
 ) -> dict:
@@ -523,7 +521,7 @@ def handle_address(
     geo_result = geocoder.geocode(normalized)
 
     # Salvează în cache (inclusiv erorile, pentru a nu repeta)
-    if geo_result.get("error") != "OVER_QUERY_LIMIT":
+    if geo_result.get("error") != "RATE_LIMITED":
         cache.put(normalized, geo_result)
 
     return geo_result
@@ -535,7 +533,6 @@ def process_file(
     header_row: int,
     col_origine_name: str,
     col_destinatie_name: str,
-    api_key: str,
     dry_run: int,
     start_row: int | None,
     end_row: int | None,
@@ -614,7 +611,7 @@ def process_file(
 
     # --- Inițializăm cache și geocoder ---
     cache = GeoCache(str(cache_path), logger)
-    geocoder = GoogleGeocoder(api_key, logger)
+    geocoder = NominatimGeocoder(logger)
 
     # --- Determinăm rândurile de procesat ---
     total_rows = ws.max_row
@@ -672,8 +669,8 @@ def process_file(
         addr_orig = ws.cell(row=row_idx, column=col_origine_idx).value
         result_orig = handle_address(addr_orig, geocoder, cache, logger)
 
-        if result_orig.get("error") == "OVER_QUERY_LIMIT":
-            logger.error("OVER_QUERY_LIMIT la rândul %d (Origine). Salvare și oprire.", row_idx)
+        if result_orig.get("error") == "RATE_LIMITED":
+            logger.error("RATE_LIMITED la rândul %d (Origine). Salvare și oprire.", row_idx)
             over_query_limit = True
             break
 
@@ -691,8 +688,8 @@ def process_file(
         addr_dest = ws.cell(row=row_idx, column=col_destinatie_idx).value
         result_dest = handle_address(addr_dest, geocoder, cache, logger)
 
-        if result_dest.get("error") == "OVER_QUERY_LIMIT":
-            logger.error("OVER_QUERY_LIMIT la rândul %d (Destinație). Salvare și oprire.", row_idx)
+        if result_dest.get("error") == "RATE_LIMITED":
+            logger.error("RATE_LIMITED la rândul %d (Destinație). Salvare și oprire.", row_idx)
             over_query_limit = True
             break
 
@@ -743,14 +740,14 @@ def process_file(
     print(f"  Erori:            {errors_count}")
     if over_query_limit:
         print()
-        print("  ⚠️  OVER_QUERY_LIMIT – scriptul s-a oprit.")
-        print("  Relansați scriptul pentru a continua de unde a rămas.")
+        print("  ⚠️  RATE LIMITED – Nominatim a blocat cererile.")
+        print("  Așteptați câteva minute și relansați scriptul.")
     print("=" * 60)
 
     logger.info("Procesare terminată. Rânduri: %d/%d | Erori: %d | Cache: %d",
                 processed, num_rows, errors_count, len(cache))
     if over_query_limit:
-        logger.warning("Oprire din cauza OVER_QUERY_LIMIT.")
+        logger.warning("Oprire din cauza RATE_LIMITED (Nominatim).")
 
 
 # ---------------------------------------------------------------------------
@@ -881,7 +878,7 @@ def select_column(ws, header_row: int, prompt: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Geocodare Origine-Destinație pentru fișiere Excel (.xlsx)",
+        description="Geocodare Origine-Destinație cu Nominatim (OpenStreetMap)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemple:
@@ -899,30 +896,17 @@ Exemple:
                         help="Rândul de început (1-based, inclusiv)")
     parser.add_argument("--end", type=int, default=None,
                         help="Rândul de sfârșit (1-based, inclusiv)")
-    parser.add_argument("--api-key", type=str, default=None,
-                        help="Google API Key (implicit: env GOOGLE_API_KEY)")
 
     args = parser.parse_args()
 
     print()
     print("=" * 60)
-    print("  GEOCODARE ORIGINE–DESTINAȚIE  v1.0")
+    print("  GEOCODARE ORIGINE–DESTINAȚIE  v1.1")
+    print("  Backend: OpenStreetMap Nominatim (gratuit)")
     print("=" * 60)
     print()
-
-    # --- API Key ---
-    api_key = args.api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_MAPS_API_KEY")
-    if not api_key:
-        print("❌ EROARE: Cheia Google API lipsește!")
-        print()
-        print("Setați variabila de mediu GOOGLE_API_KEY:")
-        print('  Windows:  set GOOGLE_API_KEY=cheia_ta')
-        print('  Linux:    export GOOGLE_API_KEY=cheia_ta')
-        print()
-        print("Sau folosiți:  python geocodare_od.py --api-key CHEIA_TA")
-        sys.exit(1)
-
-    print(f"  ✓ API Key: {'*' * 8}...{api_key[-4:]}")
+    print("  ✓ Nominatim – nu necesită API key")
+    print(f"  ⏱️  Rate limit: {RATE_LIMIT_PAUSE}s între cereri (politica Nominatim)")
 
     # --- Selectare fișier ---
     file_path = args.file
@@ -988,7 +972,6 @@ Exemple:
         header_row=header_row,
         col_origine_name=col_origine,
         col_destinatie_name=col_destinatie,
-        api_key=api_key,
         dry_run=args.dry_run,
         start_row=args.start,
         end_row=args.end,
