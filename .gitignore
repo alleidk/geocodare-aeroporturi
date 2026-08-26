@@ -1,0 +1,33 @@
+# Environment / secrets
+.env
+*.env
+
+# Cache and output files
+*_cache.json
+*Codat.xlsx
+*Codat.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Backup files
+*_backup.py
+
+# Excel temp files
+~$*.xlsx
