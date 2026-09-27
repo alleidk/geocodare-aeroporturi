@@ -18,6 +18,11 @@ Utilizare:
   python geocodare_od.py                        # file picker + dry run 100 rânduri
   python geocodare_od.py --dry-run 0            # procesare completă
   python geocodare_od.py --start 100 --end 500  # procesare parțială
+  python geocodare_od.py --single-column        # o singură coloană de adrese
+
+Modul cu o singură coloană se activează fie cu --single-column, fie apăsând
+Enter (fără text) la promptul pentru coloana DESTINAȚIE. În acest mod se
+completează doar coloanele de output "...Originea".
 """
 
 import argparse
@@ -463,13 +468,15 @@ def find_or_create_column(ws, header_row: int, col_name: str) -> int:
     return new_col
 
 
-def ensure_output_columns(ws, header_row: int) -> dict[str, int]:
+def ensure_output_columns(ws, header_row: int, include_destinatie: bool = True) -> dict[str, int]:
     """
-    Creează sau identifică toate cele 10 coloane de output.
+    Creează sau identifică coloanele de output.
+    Cu include_destinatie=True: toate cele 10 coloane (Origine + Destinație).
+    Cu include_destinatie=False: doar cele 5 coloane Origine.
     Returnează dict {nume_coloana: index}.
     """
     col_map = {}
-    all_cols = COLS_ORIGINE + COLS_DESTINATIE
+    all_cols = COLS_ORIGINE + (COLS_DESTINATIE if include_destinatie else [])
     for name in all_cols:
         col_map[name] = find_or_create_column(ws, header_row, name)
     return col_map
@@ -536,13 +543,15 @@ def process_file(
     sheet_name: str,
     header_row: int,
     col_origine_name: str,
-    col_destinatie_name: str,
+    col_destinatie_name: str | None,
     api_key: str,
     dry_run: int,
     start_row: int | None,
     end_row: int | None,
 ):
     """Logica principală de procesare a fișierului Excel."""
+
+    single_column = col_destinatie_name is None
 
     # --- Derivăm numele fișierelor output ---
     input_p = Path(input_path)
@@ -575,7 +584,10 @@ def process_file(
     logger.info("=" * 60)
     logger.info("Început procesare: %s", input_path)
     logger.info("Sheet: %s | Antet: rând %d", sheet_name, header_row)
-    logger.info("Origine: '%s' | Destinație: '%s'", col_origine_name, col_destinatie_name)
+    if single_column:
+        logger.info("Mod cu O SINGURĂ coloană – Adresă: '%s'", col_origine_name)
+    else:
+        logger.info("Origine: '%s' | Destinație: '%s'", col_origine_name, col_destinatie_name)
     logger.info("Output: %s", output_path)
     logger.info("Cache: %s", cache_path)
     logger.info("Log: %s", log_path)
@@ -594,23 +606,26 @@ def process_file(
             name = str(cell_val).strip()
             if name == col_origine_name:
                 col_origine_idx = col_idx
-            elif name == col_destinatie_name:
+            elif not single_column and name == col_destinatie_name:
                 col_destinatie_idx = col_idx
 
     if col_origine_idx is None:
         logger.error("Coloana origine '%s' nu a fost găsită!", col_origine_name)
         print(f"\n❌ EROARE: Coloana '{col_origine_name}' nu există în sheet-ul '{sheet_name}'!")
         return
-    if col_destinatie_idx is None:
+    if not single_column and col_destinatie_idx is None:
         logger.error("Coloana destinație '%s' nu a fost găsită!", col_destinatie_name)
         print(f"\n❌ EROARE: Coloana '{col_destinatie_name}' nu există în sheet-ul '{sheet_name}'!")
         return
 
-    logger.info("Coloana origine: index %d | Coloana destinație: index %d",
-                col_origine_idx, col_destinatie_idx)
+    if single_column:
+        logger.info("Coloana adresă: index %d", col_origine_idx)
+    else:
+        logger.info("Coloana origine: index %d | Coloana destinație: index %d",
+                    col_origine_idx, col_destinatie_idx)
 
     # --- Creăm coloanele de output ---
-    col_map = ensure_output_columns(ws, header_row)
+    col_map = ensure_output_columns(ws, header_row, include_destinatie=not single_column)
     logger.info("Coloane output create/identificate: %s",
                 {k: v for k, v in col_map.items()})
 
@@ -661,6 +676,11 @@ def process_file(
         already_done = existing_decoded is not None or existing_error is not None
 
         if already_done:
+            if single_column:
+                if pbar:
+                    pbar.update(1)
+                processed += 1
+                continue
             # Verificăm și destinația
             existing_decoded_d = ws.cell(row=row_idx, column=col_map["DeCodatDestinatia"]).value
             existing_error_d = ws.cell(row=row_idx, column=col_map["ErrorDestinatia"]).value
@@ -690,23 +710,24 @@ def process_file(
             errors_count += 1
 
         # --- DESTINAȚIE ---
-        addr_dest = ws.cell(row=row_idx, column=col_destinatie_idx).value
-        result_dest = handle_address(addr_dest, geocoder, cache, logger)
+        if not single_column:
+            addr_dest = ws.cell(row=row_idx, column=col_destinatie_idx).value
+            result_dest = handle_address(addr_dest, geocoder, cache, logger)
 
-        if result_dest.get("error") == "OVER_QUERY_LIMIT":
-            logger.error("OVER_QUERY_LIMIT la rândul %d (Destinație). Salvare și oprire.", row_idx)
-            over_query_limit = True
-            break
+            if result_dest.get("error") == "OVER_QUERY_LIMIT":
+                logger.error("OVER_QUERY_LIMIT la rândul %d (Destinație). Salvare și oprire.", row_idx)
+                over_query_limit = True
+                break
 
-        # Scriem rezultatele Destinație
-        ws.cell(row=row_idx, column=col_map["DeCodatDestinatia"]).value = result_dest.get("formatted")
-        ws.cell(row=row_idx, column=col_map["LatDestinatia"]).value = result_dest.get("lat")
-        ws.cell(row=row_idx, column=col_map["LonDestinatia"]).value = result_dest.get("lon")
-        ws.cell(row=row_idx, column=col_map["PlaceIdDestinatia"]).value = result_dest.get("place_id")
-        ws.cell(row=row_idx, column=col_map["ErrorDestinatia"]).value = result_dest.get("error")
+            # Scriem rezultatele Destinație
+            ws.cell(row=row_idx, column=col_map["DeCodatDestinatia"]).value = result_dest.get("formatted")
+            ws.cell(row=row_idx, column=col_map["LatDestinatia"]).value = result_dest.get("lat")
+            ws.cell(row=row_idx, column=col_map["LonDestinatia"]).value = result_dest.get("lon")
+            ws.cell(row=row_idx, column=col_map["PlaceIdDestinatia"]).value = result_dest.get("place_id")
+            ws.cell(row=row_idx, column=col_map["ErrorDestinatia"]).value = result_dest.get("error")
 
-        if result_dest.get("error"):
-            errors_count += 1
+            if result_dest.get("error"):
+                errors_count += 1
 
         processed += 1
 
@@ -828,10 +849,11 @@ def identify_header_row(ws) -> int:
                 print("  Introduceți un număr valid.")
 
 
-def select_column(ws, header_row: int, prompt: str) -> str:
+def select_column(ws, header_row: int, prompt: str, allow_empty: bool = False) -> str | None:
     """
     Afișează coloanele și lasă utilizatorul să introducă numele exact.
-    Returnează numele coloanei.
+    Returnează numele coloanei, sau None dacă allow_empty=True și utilizatorul
+    apasă Enter fără a introduce nimic.
     """
     print(f"\nColoanele din sheet (rândul {header_row}):")
     col_names = []
@@ -846,7 +868,15 @@ def select_column(ws, header_row: int, prompt: str) -> str:
 
     print()
     while True:
-        user_input = input(f"{prompt}\n  (introduceți numele exact sau numărul coloanei): ").strip()
+        if allow_empty:
+            user_input = input(
+                f"{prompt}\n  (numele exact / numărul coloanei, sau Enter pentru a sări): "
+            ).strip()
+            if not user_input:
+                print("  ↷ Nicio coloană selectată – mod cu o singură coloană.")
+                return None
+        else:
+            user_input = input(f"{prompt}\n  (introduceți numele exact sau numărul coloanei): ").strip()
 
         # Permite și introducerea numărului coloanei
         try:
@@ -891,6 +921,7 @@ Exemple:
   python geocodare_od.py --dry-run 0            # procesare completă
   python geocodare_od.py --start 100 --end 500  # procesare parțială
   python geocodare_od.py --file date.xlsx       # fără file picker
+  python geocodare_od.py --single-column        # o singură coloană de adrese
         """
     )
     parser.add_argument("--file", "-f", type=str, default=None,
@@ -903,6 +934,8 @@ Exemple:
                         help="Rândul de sfârșit (1-based, inclusiv)")
     parser.add_argument("--api-key", type=str, default=None,
                         help="Google API Key (implicit: env GOOGLE_API_KEY)")
+    parser.add_argument("--single-column", action="store_true",
+                        help="Procesează o singură coloană de adrese (fără Origine/Destinație)")
 
     args = parser.parse_args()
 
@@ -958,10 +991,21 @@ Exemple:
     header_row = identify_header_row(ws_temp)
 
     # --- Selectare coloane ---
-    col_origine = select_column(ws_temp, header_row,
-                                "Selectați coloana ORIGINE (adresa de plecare):")
-    col_destinatie = select_column(ws_temp, header_row,
-                                   "Selectați coloana DESTINAȚIE (adresa de sosire):")
+    if args.single_column:
+        col_origine = select_column(ws_temp, header_row,
+                                    "Selectați coloana cu ADRESA de geocodat:")
+        col_destinatie = None
+        print("\n  ℹ️  Mod cu o singură coloană (--single-column).")
+    else:
+        col_origine = select_column(ws_temp, header_row,
+                                    "Selectați coloana ORIGINE (adresa de plecare):")
+        col_destinatie = select_column(
+            ws_temp, header_row,
+            "Selectați coloana DESTINAȚIE (adresa de sosire):",
+            allow_empty=True,
+        )
+        if col_destinatie is None:
+            print("  ℹ️  Se va procesa doar coloana selectată (mod cu o singură coloană).")
 
     # Informații
     total = ws_temp.max_row - header_row
