@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Contul meu — Geocodare adrese{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Contul meu</h1>
+  <p class="muted">Ești autentificat ca <strong>{{ g.user.username }}</strong>.</p>
+</div>
+<section class="card narrow-card">
+  <h2>Schimbă parola</h2>
+  <form method="post">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label>Parola actuală <input name="current" type="password" autocomplete="current-password" required></label>
+    <label>Parola nouă <span class="hint">cel puțin 8 caractere</span>
+      <input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
+    <button class="primary">Salvează parola</button>
+  </form>
+</section>
+{% endblock %}

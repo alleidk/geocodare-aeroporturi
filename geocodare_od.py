@@ -71,28 +71,30 @@ COLS_DESTINATIE = [
 
 # Abrevieri → extensii (word boundary, case-insensitive)
 ABBREVIATIONS = [
+    # Abrevierile extinse în cuvinte întregi consumă și punctul („jud.” → „Județul”, nu „Județul.”)
     (r'\bstr\.?\s',        'Strada '),
-    (r'\bbd\b',            'Bulevardul'),
-    (r'\bb-d\b',           'Bulevardul'),
-    (r'\bbulev\.?\b',      'Bulevardul'),
-    (r'\bnr(?!\.)\b',      'nr.'),
-    (r'\bapt\b',           'ap.'),
-    (r'\bbl\b',            'bl.'),
-    (r'\bpl\b',            'Piața'),
+    (r'\bbd\b\.?',         'Bulevardul'),
+    (r'\bb-d\b\.?',        'Bulevardul'),
+    (r'\bbulev\b\.?',      'Bulevardul'),
+    (r'\bnr\b(?!\.)',      'nr.'),
+    (r'\bapt\b\.?',        'ap.'),
+    # „bl.”, „sc.”, „et.” primesc punct doar dacă nu îl au deja (nu „bl..”)
+    (r'\bbl\b(?!\.)',      'bl.'),
+    (r'\bpl\b\.?',         'Piața'),
     (r'\bpiata\b',         'Piața'),
-    (r'\bjud\.?\b',        'Județul'),
+    (r'\bjud\b\.?',        'Județul'),
     (r'\bjudet\b',         'Județul'),
-    (r'\bcom\b',           'Comuna'),
-    (r'\bal\b',            'Aleea'),
-    (r'\bcal\b',           'Calea'),
-    (r'\bsos\b',           'Șoseaua'),
+    (r'\bcom\b\.?',        'Comuna'),
+    (r'\bal\b\.?',         'Aleea'),
+    (r'\bcal\b\.?',        'Calea'),
+    (r'\bsos\b\.?',        'Șoseaua'),
     (r'\bfn\b',            'f.n.'),
-    (r'\bsc\b',            'sc.'),
-    (r'\bet\b',            'et.'),
-    (r'\bmun\b',           'Municipiul'),
+    (r'\bsc\b(?!\.)',      'sc.'),
+    (r'\bet\b(?!\.)',      'et.'),
+    (r'\bmun\b\.?',        'Municipiul'),
     (r'\bsat\b',           'Satul'),
     (r'\boras\b',          'Orașul'),
-    (r'\bsf\b',            'Sfântu'),
+    (r'\bsf\b\.?',         'Sfântu'),
 ]
 
 # Diacritice – localități frecvente din România

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Utilizatori — Geocodare adrese{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Utilizatori</h1>
+  <p class="muted">Cine poate intra pe site. Fiecare vede doar fișierele lui; administratorii le văd pe toate.</p>
+</div>
+
+{% if new_password %}
+<section class="card highlight">
+  <h2>Datele de acces pentru „{{ new_password.username }}”</h2>
+  <p>Trimite-le persoanei respective. <strong>Parola nu va mai fi afișată</strong> — o poate schimba după ce intră.</p>
+  <pre class="credentials" id="creds">Adresa: {{ request.host_url }}
+Utilizator: {{ new_password.username }}
+Parolă: {{ new_password.password }}</pre>
+  <button class="small" onclick="navigator.clipboard.writeText(document.getElementById('creds').textContent).then(() => { this.textContent = 'Copiat ✓'; })">Copiază</button>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Adaugă o persoană</h2>
+  <form method="post" action="{{ url_for('admin_create_user') }}" class="inline-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label>Nume de utilizator
+      <input name="username" placeholder="ex. maria" maxlength="50" required autocomplete="off">
+    </label>
+    <label class="check"><input type="checkbox" name="is_admin" value="1"> administrator</label>
+    <button class="primary">Creează cont</button>
+  </form>
+  <p class="muted small">Parola se generează automat și ți se arată o singură dată.</p>
+</section>
+
+<section class="card">
+  <h2>Conturi</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Utilizator</th><th>Rol</th><th class="num">Fișiere</th><th>Creat</th><th></th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td><strong>{{ u.username }}</strong>{% if u.id == g.user.id %} <span class="muted small">(tu)</span>{% endif %}</td>
+        <td>{{ 'Administrator' if u.is_admin else 'Utilizator' }}</td>
+        <td class="num">{{ u.job_count }}</td>
+        <td class="nowrap muted">{{ u.created_at | datetime }}</td>
+        <td class="right nowrap">
+          <form method="post" action="{{ url_for('admin_reset_password', user_id=u.id) }}" class="inline"
+                data-confirm="Generezi o parolă nouă pentru {{ u.username }}? Cea veche nu va mai funcționa." onsubmit="return confirm(this.dataset.confirm)">
+            <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+            <button class="small">Parolă nouă</button>
+          </form>
+          {% if u.id != g.user.id %}
+          <form method="post" action="{{ url_for('admin_delete_user', user_id=u.id) }}" class="inline"
+                data-confirm="Ștergi contul {{ u.username }} și toate fișierele lui?" onsubmit="return confirm(this.dataset.confirm)">
+            <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+            <button class="small ghost danger">Șterge</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

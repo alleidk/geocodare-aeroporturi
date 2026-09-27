@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Configurare — {{ job.filename }}{% endblock %}
+{% block content %}
+<form method="get" id="sheet-form"></form>
+
+<div class="page-head">
+  <p class="crumbs"><a href="{{ url_for('index') }}">Fișiere</a> / {{ job.filename }}</p>
+  <h1>Unde sunt adresele?</h1>
+  <p class="muted">
+    Am citit fișierul și am completat ce am putut ghici. Verifică și apasă „Pornește”.
+    {% if info.sheets | length > 1 %}
+    <span class="inline-field">Foaia:
+      <select name="sheet" form="sheet-form" onchange="this.form.submit()">
+        {% for s in info.sheets %}<option {% if s == info.sheet %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </span>
+    {% endif %}
+    <span class="nowrap">· {{ '{:,}'.format(info.rows).replace(',', '.') }} rânduri</span>
+  </p>
+</div>
+
+<form method="post" id="config-form" class="config-layout">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="sheet" value="{{ info.sheet }}">
+  <input type="hidden" name="header_row" value="{{ info.header_row }}">
+
+  <div class="config-main">
+    <section class="card option-card">
+      <div class="option-head">
+        <span class="option-num">A</span>
+        <div>
+          <h2>Adresa întreagă într-o coloană</h2>
+          <p class="muted small">Fiecare celulă are toată adresa, de ex. „judetul Dolj, CRAIOVA, Strada Lapus”.</p>
+        </div>
+        {% if selected.col_origin %}<span class="tag">găsită automat</span>{% endif %}
+      </div>
+      {% for field, title, hint, empty in [
+           ('col_origin', 'Coloana cu adresa', 'sau adresa de ORIGINE, dacă fișierul are și destinație', '— nu folosesc —'),
+           ('col_dest', 'Coloana DESTINAȚIE', 'opțional', '— nu are destinație —')] %}
+      <label>{{ title }} <span class="hint">{{ hint }}</span>
+        <select name="{{ field }}" data-samples>
+          <option value="">{{ empty }}</option>
+          {% for col in info.columns %}
+          <option value="{{ col.index }}" {% if col.index == selected[field] %}selected{% endif %}
+                  data-samples="{{ col.samples | join(' · ') }}">{{ col.letter }} · {{ col.label | truncate(80) }}</option>
+          {% endfor %}
+        </select>
+        <span class="samples"></span>
+      </label>
+      {% endfor %}
+    </section>
+
+    <section class="card option-card">
+      <details {% if selected.groups %}open{% endif %}>
+        <summary class="option-head">
+          <span class="option-num">B</span>
+          <div>
+            <h2>Adresa împărțită pe câte 4 coloane</h2>
+            <p class="muted small">Județ · (ignorată) · cod localitate · stradă sau punct de reper.</p>
+          </div>
+          {% if selected.groups %}<span class="tag">găsite automat</span>{% else %}<span class="tag muted-tag">opțional</span>{% endif %}
+        </summary>
+        <div class="option-body">
+          <p class="muted small">
+            Numele localității se ia după cod din foaia de coduri. La orașe (cod 9999 sau fără cod) fișierul nu are numele orașului,
+            așa că se trimit doar strada și județul — rezultatul primește observația <code>FaraLocalitate</code>.
+            Grupurile se găsesc după culoarea antetului.
+          </p>
+          <label>Grupuri — prima coloană din fiecare <span class="hint">litere Excel, separate prin virgulă</span>
+            <input name="groups" value="{{ selected.groups }}" placeholder="ex. GY, HO, ID" autocomplete="off" spellcheck="false">
+          </label>
+          <div id="groups-preview" class="groups"></div>
+          <label>Foaia cu codurile localităților <span class="hint">coloana 1 = cod, coloana 2 = nume</span>
+            <select name="lookup_sheet">
+              <option value="">— niciuna —</option>
+              {% for s in info.sheets if s != info.sheet %}
+              <option {% if s == selected.lookup_sheet %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Cât procesez?</h2>
+      <div class="choice-row">
+        <label class="choice">
+          <input type="radio" name="scope" value="all" {% if not job.max_rows %}checked{% endif %}>
+          <span><strong>Tot fișierul</strong><span class="muted small">după ce ai verificat un test</span></span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="scope" value="test" {% if job.max_rows %}checked{% endif %}>
+          <span><strong>Doar un test</strong>
+            <span class="muted small">primele <input type="number" name="max_rows" min="1" value="{{ job.max_rows or 200 }}" class="tiny"> rânduri de procesat</span>
+          </span>
+        </label>
+      </div>
+
+      <details class="advanced">
+        <summary>Setări avansate</summary>
+        <div class="grid2">
+          <label>Serviciu de geocodare
+            <select name="provider">
+              {% for key, name in available.items() %}
+              <option value="{{ key }}" {% if key == (job.provider or 'google') %}selected{% endif %}>{{ name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Rândul cu antetul (numele coloanelor)
+            <input type="number" name="header_row" form="sheet-form" min="1" value="{{ info.header_row }}" onchange="this.form.submit()">
+          </label>
+        </div>
+        <input type="hidden" name="sheet" form="sheet-form" value="{{ info.sheet }}">
+        <label class="check">
+          <input type="checkbox" name="skip_done" value="1" {% if job.skip_done != 0 %}checked{% endif %}>
+          Sari peste adresele care au deja rezultat în fișier (coloanele DeCodat…/Error… completate)
+        </label>
+      </details>
+      {% if 'google' not in available %}
+      <p class="flash error">Cheia Google API nu este configurată pe server — este disponibil doar Nominatim (gratuit, dar lent).</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <aside class="config-side">
+    <section class="card summary">
+      <h2>Rezumat</h2>
+      <div id="estimate" class="loading">Se calculează…</div>
+      <button class="primary wide" id="start-btn">Pornește geocodarea</button>
+      <p class="muted small">Coloanele noi se adaugă la finalul foii; cele existente nu se modifică.</p>
+    </section>
+  </aside>
+</form>
+
+<script>
+(function () {
+  const form = document.getElementById('config-form');
+  const box = document.getElementById('estimate');
+  const startBtn = document.getElementById('start-btn');
+  const url = {{ url_for('estimate', job_id=job.id) | tojson }};
+  const columns = {{ info.columns | map(attribute='label') | list | tojson }};
+  const maxRows = form.elements.max_rows;
+  let timer = null, seq = 0;
+
+  const fmt = n => (n || 0).toLocaleString('ro-RO');
+
+  function showSamples(select) {
+    const opt = select.selectedOptions[0];
+    select.parentElement.querySelector('.samples').textContent =
+      opt && opt.dataset.samples ? 'Exemple: ' + opt.dataset.samples : '';
+  }
+
+  function colIndex(letters) {
+    let n = 0;
+    for (const ch of letters.toUpperCase()) {
+      if (ch < 'A' || ch > 'Z') return null;
+      n = n * 26 + (ch.charCodeAt(0) - 64);
+    }
+    return n || null;
+  }
+  function colLetters(n) {
+    let s = '';
+    while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+    return s;
+  }
+
+  function showGroups() {
+    const out = document.getElementById('groups-preview');
+    const parts = form.elements.groups.value.split(/[\s,;]+/).filter(Boolean);
+    out.replaceChildren();
+    if (!parts.length) return;
+    const head = document.createElement('div');
+    head.className = 'groups-head';
+    head.textContent = parts.length === 1 ? '1 grup' : `${parts.length} grupuri`;
+    out.append(head);
+    for (const p of parts) {
+      const i = colIndex(p);
+      const line = document.createElement('div');
+      if (!i) { line.textContent = `„${p}” nu e o literă de coloană validă`; line.className = 'bad'; }
+      else {
+        const b = document.createElement('b');
+        b.textContent = `${colLetters(i)}–${colLetters(i + 3)}`;
+        line.append(b, ' ' + [0, 1, 2, 3].map(k => columns[i - 1 + k] || '?').join(' · '));
+      }
+      out.append(line);
+    }
+  }
+
+  const isTest = () => form.elements.scope.value === 'test';
+  function syncScope() {
+    maxRows.closest('.choice').classList.toggle('dim', !isTest());
+  }
+
+  function row(label, value, cls) {
+    return `<div class="sum-row ${cls || ''}"><span>${label}</span><strong>${value}</strong></div>`;
+  }
+
+  async function refresh() {
+    const data = new FormData(form);
+    const params = new URLSearchParams();
+    for (const k of ['sheet', 'header_row', 'col_origin', 'col_dest', 'groups', 'lookup_sheet', 'provider', 'max_rows', 'skip_done'])
+      params.set(k, data.get(k) || '');
+    if (!isTest()) params.set('max_rows', '');
+    const mine = ++seq;
+    box.className = 'loading';
+    box.textContent = 'Se calculează… (la fișierele mari durează câteva secunde)';
+    let resp, e;
+    try { resp = await fetch(url + '?' + params); e = await resp.json(); }
+    catch (err) { if (mine === seq) { box.className = 'bad'; box.textContent = 'Nu am putut calcula estimarea.'; } return; }
+    if (mine !== seq) return;
+    if (!resp.ok) {
+      box.className = 'bad';
+      box.textContent = e.error || 'Setări invalide.';
+      startBtn.disabled = true;
+      return;
+    }
+    startBtn.disabled = false;
+    const google = data.get('provider') === 'google';
+    let cost, time;
+    if (google) {
+      cost = e.todo <= 10000 ? 'probabil gratuit' : `~${fmt(Math.round((e.todo - 10000) * 5 / 1000))} USD`;
+      time = Math.ceil(e.todo / 20 / 60) + (e.rows > 5000 ? 2 : 1);
+    } else {
+      cost = 'gratuit';
+      time = Math.ceil(e.todo * 1.1 / 60) + 1;
+    }
+    let html = '';
+    html += row('Adrese de geocodat', fmt(e.addresses));
+    html += row('Adrese diferite', fmt(e.unique));
+    if (e.cached) html += row('Deja geocodate recent', fmt(e.cached), 'muted');
+    html += row('Cereri noi', fmt(e.todo), 'big');
+    html += row('Cost estimat', cost);
+    html += row('Durată estimată', `~${fmt(time)} min`);
+    let notes = [];
+    if (e.already) notes.push(`${fmt(e.already)} adrese au deja rezultat în fișier și rămân cum sunt.`);
+    if (e.skipped) notes.push(`${fmt(e.skipped)} nu se trimit (goale, neclare sau fără localitate și stradă).`);
+    if (e.no_locality) notes.push(`${fmt(e.no_locality)} sunt la oraș fără numele orașului — rezultat aproximativ.`);
+    if (google && e.todo > 10000) notes.push('Google oferă 10.000 de cereri gratuite pe lună; costul presupune că nu ai folosit cheia în altă parte luna aceasta.');
+    if (!e.addresses) notes.push('Nu am găsit nicio adresă de geocodat cu setările alese.');
+    if (notes.length) html += '<ul class="notes">' + notes.map(n => `<li>${n}</li>`).join('') + '</ul>';
+    box.className = '';
+    box.innerHTML = html;
+    startBtn.disabled = !e.addresses;
+  }
+
+  form.querySelectorAll('select[data-samples]').forEach(s => {
+    showSamples(s);
+    s.addEventListener('change', () => showSamples(s));
+  });
+  form.elements.groups.addEventListener('input', showGroups);
+  form.querySelectorAll('input[name=scope]').forEach(r => r.addEventListener('change', syncScope));
+  maxRows.addEventListener('focus', () => { form.elements.scope.value = 'test'; syncScope(); });
+  showGroups();
+  syncScope();
+  form.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(refresh, 250); });
+  form.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 800); });
+  form.addEventListener('submit', () => {
+    if (!isTest()) maxRows.disabled = true;   // „Tot fișierul” → max_rows nu se trimite
+    startBtn.disabled = true;
+    startBtn.textContent = 'Se pornește…';
+  });
+  refresh();
+})();
+</script>
+{% endblock %}

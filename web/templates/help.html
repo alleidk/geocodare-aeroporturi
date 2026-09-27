@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Ajutor — Geocodare adrese{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Ajutor</h1>
+  <p class="muted">Cum se folosește site-ul și cum se citesc rezultatele.</p>
+</div>
+
+<section class="card prose">
+  <h2>Ce face site-ul</h2>
+  <p>
+    Primește un fișier Excel cu adrese și adaugă pentru fiecare adresă coordonatele (latitudine și longitudine),
+    folosind Google. Primești înapoi <strong>același fișier</strong>, cu coloane noi la final — coloanele existente
+    nu se mută și nu se modifică.
+  </p>
+
+  <h2>Pașii</h2>
+  <ol>
+    <li><strong>Încarci fișierul</strong> (.xlsx) de pe pagina „Fișiere”.</li>
+    <li><strong>Verifici unde sunt adresele.</strong> Site-ul le ghicește singur; tu doar confirmi.
+      Adresele pot fi:
+      <ul>
+        <li><strong>A — într-o singură coloană</strong>, de ex. „judetul Dolj, CRAIOVA, Strada Lapus”;</li>
+        <li><strong>B — împărțite pe câte 4 coloane</strong>: județ · (ignorată) · cod localitate · stradă.
+          Numele localității se ia după cod dintr-o foaie de coduri (de ex. „Coresp Com”).
+          Grupurile sunt găsite după culoarea antetului.</li>
+      </ul>
+    </li>
+    <li><strong>Faci întâi un test</strong> pe 100–200 de rânduri și te uiți la rezultat.</li>
+    <li><strong>Rulezi tot fișierul</strong> și descarci rezultatul. Poți închide pagina între timp.</li>
+  </ol>
+
+  <h2>Coloanele adăugate</h2>
+  <div class="table-wrap">
+  <table class="legend">
+    <thead><tr><th>Coloană</th><th>Conținut</th></tr></thead>
+    <tbody>
+      <tr><td><code>Adresa_…</code></td><td>Adresa compusă trimisă la Google (doar la grupurile de 4 coloane).</td></tr>
+      <tr><td><code>DeCodat…</code></td><td>Adresa găsită de Google.</td></tr>
+      <tr><td><code>Lat…</code>, <code>Lon…</code></td><td>Latitudinea și longitudinea.</td></tr>
+      <tr><td><code>PlaceId…</code></td><td>Identificatorul locului la Google.</td></tr>
+      <tr><td><code>Error…</code></td><td>Observații — gol înseamnă că adresa a fost găsită sigur.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted small">
+    Sufixul arată de unde vine adresa: <code>…Originea</code> / <code>…Destinatia</code> pentru coloanele cu adresa întreagă,
+    <code>…_Q162_1</code> (numele primei coloane din grup) pentru grupuri.
+  </p>
+
+  <h2>Observațiile din coloanele „Error…”</h2>
+  <div class="table-wrap">
+  <table class="legend">
+    <thead><tr><th>Cod</th><th>Ce înseamnă</th></tr></thead>
+    <tbody>
+      {% for code, (title, text, level) in error_help.items() %}
+      <tr><td><span class="code {{ level }}">{{ code }}</span></td><td><strong>{{ title }}.</strong> {{ text }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Bine de știut</h2>
+  <ul>
+    <li><strong>Fișiere geocodate parțial:</strong> adresele care au deja rezultat sunt sărite, deci poți reîncărca un fișier la care s-au adăugat rânduri noi.</li>
+    <li><strong>Memorie:</strong> o adresă geocodată rămâne ținută minte 30 de zile, așa că la o nouă rulare nu se mai plătește pentru ea.</li>
+    <li><strong>Cost:</strong> Google oferă 10.000 de cereri gratuite pe lună, apoi aproximativ 5 USD la 1.000. Estimarea apare înainte de pornire.</li>
+    <li><strong>Oprire:</strong> dacă oprești geocodarea, poți continua mai târziu de unde a rămas, fără să plătești din nou.</li>
+  </ul>
+</section>
+{% endblock %}

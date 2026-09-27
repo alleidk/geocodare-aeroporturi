@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Geocodează un fișier Excel</h1>
+  <p class="muted">Adaugi coordonate (latitudine, longitudine) pentru adresele din fișier. Primești înapoi același Excel, cu coloane noi la final.</p>
+</div>
+
+<ol class="steps-intro">
+  <li><span class="num">1</span><div><strong>Încarci fișierul</strong><span class="muted">Excel .xlsx, până la {{ max_upload_mb }} MB</span></div></li>
+  <li><span class="num">2</span><div><strong>Alegi unde sunt adresele</strong><span class="muted">site-ul le ghicește singur, tu doar verifici</span></div></li>
+  <li><span class="num">3</span><div><strong>Descarci rezultatul</strong><span class="muted">poți închide pagina între timp</span></div></li>
+</ol>
+
+<form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" class="card upload-card" id="upload-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <label class="dropzone" id="dropzone">
+    <input type="file" name="file" id="file-input" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+    <svg width="36" height="36" viewBox="0 0 24 24" aria-hidden="true" class="drop-icon"><path d="M12 3l-5 5h3v6h4V8h3l-5-5zM5 17v3h14v-3h2v5H3v-5h2z"/></svg>
+    <span class="drop-title" id="drop-title">Trage fișierul aici sau <u>alege-l din calculator</u></span>
+    <span class="muted small" id="drop-sub">Doar fișiere .xlsx</span>
+  </label>
+  <div class="upload-actions">
+    <button class="primary" id="upload-btn" disabled>Continuă</button>
+  </div>
+</form>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Fișierele {{ 'tuturor utilizatorilor' if g.user.is_admin else 'tale' }}</h2>
+  </div>
+  {% if jobs %}
+  <ul class="job-list">
+    {% for job in jobs %}
+    {% set active = job.status in ('queued', 'running') %}
+    <li class="job-row" data-id="{{ job.id }}" {% if active %}data-active{% endif %}>
+      <a class="job-main" href="{{ url_for('job_page', job_id=job.id) }}">
+        <span class="file-icon" aria-hidden="true">XLSX</span>
+        <span class="job-text">
+          <span class="job-name">{{ job.filename }}</span>
+          <span class="muted small">{{ job.created_at | datetime }}{% if g.user.is_admin %} · {{ job.username }}{% endif %}</span>
+        </span>
+      </a>
+      <span class="job-status">
+        <span class="badge {{ job.status }}" data-badge>{{ status_labels[job.status] }}</span>
+        {% if active %}
+        <span class="mini-progress"><span data-bar style="width: {{ ((100 * job.done / job.total) if job.total else 0) | round | int }}%"></span></span>
+        {% endif %}
+      </span>
+      <span class="job-action">
+        {% if job.status == 'done' %}
+          <a class="button small primary" href="{{ url_for('download', job_id=job.id) }}">Descarcă</a>
+        {% elif job.status == 'new' %}
+          <a class="button small" href="{{ url_for('configure', job_id=job.id) }}">Continuă</a>
+        {% else %}
+          <a class="button small" href="{{ url_for('job_page', job_id=job.id) }}">Vezi</a>
+        {% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty">
+    <p><strong>Niciun fișier încă.</strong></p>
+    <p class="muted">Fișierele încărcate apar aici, împreună cu rezultatele.</p>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+(function () {
+  const input = document.getElementById('file-input');
+  const zone = document.getElementById('dropzone');
+  const btn = document.getElementById('upload-btn');
+  const title = document.getElementById('drop-title');
+  const sub = document.getElementById('drop-sub');
+
+  function show() {
+    const f = input.files[0];
+    if (!f) return;
+    const ok = f.name.toLowerCase().endsWith('.xlsx');
+    zone.classList.toggle('chosen', ok);
+    zone.classList.toggle('bad', !ok);
+    title.textContent = f.name;
+    sub.textContent = ok ? (f.size / 1048576).toFixed(1).replace('.', ',') + ' MB · apasă „Continuă”'
+                         : 'Acesta nu e un fișier .xlsx — alege altul';
+    btn.disabled = !ok;
+  }
+  input.addEventListener('change', show);
+  ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('over'); }));
+  zone.addEventListener('drop', e => { if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; show(); } });
+  document.getElementById('upload-form').addEventListener('submit', () => {
+    btn.disabled = true; btn.textContent = 'Se încarcă…';
+  });
+
+  // Actualizează progresul fișierelor în lucru
+  const statusUrl = {{ url_for('job_status', job_id='__ID__') | tojson }};
+  const labels = {{ status_labels | tojson }};
+  function poll() {
+    const rows = document.querySelectorAll('.job-row[data-active]');
+    if (!rows.length) return;
+    Promise.all([...rows].map(async row => {
+      const resp = await fetch(statusUrl.replace('__ID__', row.dataset.id));
+      if (!resp.ok) return;
+      const j = await resp.json();
+      if (j.status !== 'queued' && j.status !== 'running') { location.reload(); return; }
+      const badge = row.querySelector('[data-badge]');
+      badge.className = 'badge ' + j.status;
+      badge.textContent = labels[j.status];
+      const bar = row.querySelector('[data-bar]');
+      if (bar) bar.style.width = (j.total ? Math.floor(100 * j.done / j.total) : 0) + '%';
+    })).finally(() => setTimeout(poll, 3000));
+  }
+  setTimeout(poll, 3000);
+})();
+</script>
+{% endblock %}

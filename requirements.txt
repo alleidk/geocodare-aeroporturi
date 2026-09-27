@@ -1,0 +1,5 @@
+openpyxl>=3.1
+requests>=2.31
+tqdm>=4.66
+flask>=3.0
+waitress>=3.0

@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}{{ job.filename }} — Geocodare adrese{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="crumbs"><a href="{{ url_for('index') }}">Fișiere</a> / {{ job.filename }}</p>
+  <h1>{{ job.filename }}</h1>
+  <p class="muted small">
+    {{ what }} · foaia „{{ job.sheet }}” · {{ providers[job.provider] }}
+    {% if job.max_rows %}· <strong>test</strong>: primele {{ job.max_rows }} rânduri{% endif %}
+  </p>
+</div>
+
+<section class="card status-card" id="status-card" data-status="{{ job.status }}">
+  <div class="status-top">
+    <span class="status-icon" aria-hidden="true">
+      <svg class="i-run" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke-width="3" stroke-dasharray="42 100"/></svg>
+      <svg class="i-done" viewBox="0 0 24 24"><path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6 11-11-1.4-1.4z"/></svg>
+      <svg class="i-bad" viewBox="0 0 24 24"><path d="M11 7h2v7h-2zm0 9h2v2h-2zM12 2 1 21h22z" fill-rule="evenodd"/></svg>
+      <svg class="i-stop" viewBox="0 0 24 24"><path d="M8 6h3v12H8zm5 0h3v12h-3z"/></svg>
+    </span>
+    <div>
+      <h2 id="headline"></h2>
+      <p id="subline" class="muted"></p>
+    </div>
+  </div>
+
+  <div class="progress" id="progress-wrap"><div class="bar" id="bar"></div></div>
+
+  <ol class="phases" id="phases">
+    <li data-phase="Citire fișier">Citire fișier</li>
+    <li data-phase="Geocodare">Geocodare</li>
+    <li data-phase="Scriere rezultate">Scriere rezultate</li>
+    <li data-phase="Salvare fișier">Salvare fișier</li>
+  </ol>
+
+  <div class="actions">
+    <a class="button primary big" id="download" href="{{ url_for('download', job_id=job.id) }}" hidden>
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+      Descarcă {{ job.output_name }}
+    </a>
+    <form method="post" action="{{ url_for('cancel', job_id=job.id) }}" id="cancel" hidden>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button>Oprește</button>
+    </form>
+    <form method="post" action="{{ url_for('retry', job_id=job.id) }}" id="retry" hidden>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="primary">Continuă de unde a rămas</button>
+    </form>
+    <a class="button" id="reconfigure" href="{{ url_for('configure', job_id=job.id) }}" hidden>
+      {{ 'Rulează tot fișierul / alte setări' if job.max_rows else 'Schimbă setările' }}
+    </a>
+    <form method="post" action="{{ url_for('delete', job_id=job.id) }}" id="delete" class="push-right" hidden
+          onsubmit="return confirm('Ștergi fișierul încărcat și rezultatul?')">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="ghost danger">Șterge</button>
+    </form>
+  </div>
+  <p class="muted small" id="close-hint">Poți închide pagina — geocodarea continuă pe server.</p>
+</section>
+
+<section class="stats" id="stats" hidden>
+  <div class="stat"><span class="stat-value" id="s-addresses"></span><span class="stat-label">adrese procesate</span></div>
+  <div class="stat"><span class="stat-value" id="s-found"></span><span class="stat-label">cu coordonate</span></div>
+  <div class="stat"><span class="stat-value" id="s-new"></span><span class="stat-label">cereri noi la Google</span></div>
+  <div class="stat"><span class="stat-value" id="s-cache"></span><span class="stat-label">din memorie (gratuit)</span></div>
+</section>
+
+{% if breakdown %}
+<section class="card">
+  <h2>Observații în coloanele „Error…”</h2>
+  <p class="muted small">
+    Adresele fără nicio observație sunt găsite sigur. O adresă poate avea mai multe observații.
+    În Excel poți filtra coloana <code>Error…</code> după aceste coduri.
+  </p>
+  <div class="table-wrap">
+  <table class="legend">
+    <thead><tr><th>Cod</th><th class="num">Adrese</th><th>Ce înseamnă</th></tr></thead>
+    <tbody>
+      {% for b in breakdown %}
+      <tr>
+        <td><span class="code {{ b.level }}">{{ b.code }}</span></td>
+        <td class="num">{{ '{:,}'.format(b.count).replace(',', '.') }}</td>
+        <td><strong>{{ b.title }}.</strong> {{ b.text }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<script>
+(function () {
+  const url = {{ url_for('job_status', job_id=job.id) | tojson }};
+  const initial = {{ job_data | tojson }};
+  const isTest = {{ (job.max_rows is not none) | tojson }};
+  const $ = id => document.getElementById(id);
+  const fmt = n => (n || 0).toLocaleString('ro-RO');
+  const PHASES = ['Citire fișier', 'Geocodare', 'Scriere rezultate', 'Salvare fișier'];
+
+  function render(j) {
+    const active = j.status === 'running' || j.status === 'queued';
+    const pct = j.status === 'done' ? 100 : (j.total ? Math.floor(100 * j.done / j.total) : 0);
+    $('status-card').dataset.status = j.status;
+
+    let head = '', sub = '';
+    switch (j.status) {
+      case 'queued':
+        head = 'În așteptare';
+        sub = 'Pornește imediat ce se termină fișierul dinainte.';
+        break;
+      case 'running':
+        if (j.phase === 'Geocodare' && j.total) {
+          head = `Se geocodează… ${pct}%`;
+          sub = `${fmt(j.done)} din ${fmt(j.total)} adrese noi trimise la Google.`;
+        } else {
+          head = (j.phase || 'Se pregătește') + '…';
+          sub = j.phase === 'Citire fișier' ? 'La fișierele mari durează un minut sau două.'
+              : j.phase === 'Geocodare' ? 'Toate adresele erau deja geocodate recent — nu e nevoie de cereri noi.'
+              : 'Aproape gata — se scrie fișierul Excel.';
+        }
+        break;
+      case 'done':
+        head = isTest ? 'Testul e gata' : 'Gata! Fișierul e pregătit';
+        sub = isTest ? 'Descarcă-l și verifică rezultatele. Dacă arată bine, rulează tot fișierul.'
+                     : 'Descarcă fișierul Excel cu coordonatele adăugate.';
+        break;
+      case 'failed':
+        head = 'Geocodarea s-a oprit din cauza unei erori';
+        sub = j.message || '';
+        break;
+      case 'cancelled':
+        head = 'Oprit';
+        sub = (j.message || '') + ' Poți continua oricând de unde a rămas.';
+        break;
+    }
+    $('headline').textContent = head;
+    $('subline').textContent = sub;
+
+    $('progress-wrap').hidden = !active;
+    $('bar').style.width = pct + '%';
+
+    const current = PHASES.indexOf(j.phase);
+    $('phases').hidden = !active;
+    document.querySelectorAll('#phases li').forEach((li, i) => {
+      li.className = i < current ? 'past' : i === current ? 'current' : '';
+    });
+
+    const hasStats = j.unique_count || j.addresses;
+    $('stats').hidden = !hasStats;
+    if (hasStats) {
+      $('s-addresses').textContent = fmt(j.addresses || j.unique_count);
+      $('s-addresses').nextElementSibling.textContent = j.addresses ? 'adrese procesate' : 'adrese diferite';
+      $('s-found').textContent = j.addresses ? `${fmt(j.found)} (${Math.round(100 * j.found / j.addresses)}%)` : '—';
+      $('s-new').textContent = fmt(j.total);
+      $('s-cache').textContent = fmt(j.cache_hits);
+    }
+
+    $('download').hidden = j.status !== 'done';
+    $('cancel').hidden = !active;
+    $('retry').hidden = !(j.status === 'failed' || j.status === 'cancelled');
+    $('reconfigure').hidden = active;
+    $('delete').hidden = j.status === 'running';
+    $('close-hint').hidden = !active;
+    return active;
+  }
+
+  async function poll() {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const j = await resp.json();
+        if (!render(j)) { location.reload(); return; }   // gata: reîncarcă pentru tabelul cu observații
+        setTimeout(poll, 2000);
+        return;
+      }
+    } catch (e) { /* rețea — reîncercăm */ }
+    setTimeout(poll, 5000);
+  }
+
+  if (render(initial)) setTimeout(poll, 1000);
+})();
+</script>
+{% endblock %}

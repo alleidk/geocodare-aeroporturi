@@ -1,0 +1,9 @@
+.git
+.claude
+.env
+*.env
+data/
+__pycache__/
+*.xlsx
+*_cache.json
+*.log

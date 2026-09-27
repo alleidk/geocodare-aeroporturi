@@ -1,11 +1,23 @@
-# Environment / secrets
+# Secrete
 .env
 *.env
 
-# Cache and output files
+# Date — fișierele Excel și documentele nu se urcă pe GitHub
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.docx
+*.pdf
+date/
+documente/
+
+# Datele site-ului (bază de date, fișiere încărcate, cache)
+data/
+
+# Fișiere generate de script
 *_cache.json
-*Codat.xlsx
-*Codat.log
+*.log
 
 # Python
 __pycache__/
@@ -16,18 +28,12 @@ dist/
 build/
 *.egg
 
-# IDE
+# Editoare / sistem
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
-
-# OS
 Thumbs.db
 .DS_Store
-
-# Backup files
-*_backup.py
-
-# Excel temp files
-~$*.xlsx
+~$*
