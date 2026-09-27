@@ -3,8 +3,8 @@
 import hashlib
 import hmac
 import secrets
+import threading
 import time
-from collections import defaultdict, deque
 from functools import wraps
 
 from flask import abort, g, redirect, request, session, url_for
@@ -103,23 +103,58 @@ def admin_required(view):
 
 
 # ---------------------------------------------------------------------------
-# Limitare încercări de login (per IP, în memorie)
+# Blocare după parole greșite (în memorie)
+#   - de pe același dispozitiv (IP): după LOGIN_MAX_FAILURES greșeli
+#   - pe același cont, din orice loc: după USER_MAX_FAILURES greșeli
+# Blocarea durează LOGIN_LOCKOUT_MINUTES; greșelile se uită după aceeași durată.
 # ---------------------------------------------------------------------------
 
-_FAILED_WINDOW = 15 * 60
-_FAILED_MAX = 10
-_failed: dict[str, deque] = defaultdict(deque)
+USER_MAX_FAILURES = 10
+
+_lock = threading.Lock()
+_failures: dict[str, list[float]] = {}
+_locked_until: dict[str, float] = {}
 
 
-def login_blocked(ip: str) -> bool:
-    attempts = _failed[ip]
-    while attempts and attempts[0] < time.time() - _FAILED_WINDOW:
-        attempts.popleft()
-    return len(attempts) >= _FAILED_MAX
+def _keys(ip: str, username: str):
+    return (f"ip:{ip}", config.LOGIN_MAX_FAILURES), (f"user:{username.lower()}", USER_MAX_FAILURES)
 
 
-def record_failed_login(ip: str):
-    _failed[ip].append(time.time())
+def login_wait_seconds(ip: str, username: str) -> int:
+    """Câte secunde mai durează blocarea (0 = se poate încerca)."""
+    now = time.time()
+    with _lock:
+        wait = 0
+        for key, _ in _keys(ip, username):
+            until = _locked_until.get(key, 0)
+            if until > now:
+                wait = max(wait, int(until - now) + 1)
+            else:
+                _locked_until.pop(key, None)
+        return wait
+
+
+def record_failed_login(ip: str, username: str) -> int:
+    """Notează o greșeală. Returnează câte încercări mai are dispozitivul până la blocare."""
+    now = time.time()
+    lockout = config.LOGIN_LOCKOUT_MINUTES * 60
+    remaining = config.LOGIN_MAX_FAILURES
+    with _lock:
+        for key, limit in _keys(ip, username):
+            times = [t for t in _failures.get(key, []) if now - t < lockout] + [now]
+            if len(times) >= limit:
+                _locked_until[key] = now + lockout
+                times = []
+            _failures[key] = times
+            if key.startswith("ip:"):
+                remaining = limit - len(times) if times else 0
+    return remaining
+
+
+def clear_failed_logins(ip: str, username: str):
+    with _lock:
+        for key, _ in _keys(ip, username):
+            _failures.pop(key, None)
 
 
 # ---------------------------------------------------------------------------

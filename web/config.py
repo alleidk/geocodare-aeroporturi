@@ -22,6 +22,9 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "0") == "1"
 TRUST_PROXY = os.environ.get("TRUST_PROXY", "0") == "1"
 
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
+# După câte parole greșite (de pe același dispozitiv) se blochează login-ul și pentru cât timp
+LOGIN_MAX_FAILURES = int(os.environ.get("LOGIN_MAX_FAILURES", "3"))
+LOGIN_LOCKOUT_MINUTES = int(os.environ.get("LOGIN_LOCKOUT_MINUTES", "15"))
 # Câte cereri Google în paralel (limita Google: 50/s)
 GOOGLE_WORKERS = int(os.environ.get("GOOGLE_WORKERS", "4"))
 # Termenii Google Maps Platform permit păstrarea coordonatelor max. 30 de zile

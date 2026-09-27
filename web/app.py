@@ -152,15 +152,22 @@ def register_routes(app: Flask):
     def login():
         if request.method == "POST":
             ip = request.remote_addr or "?"
-            if auth.login_blocked(ip):
-                flash("Prea multe încercări eșuate. Încercați din nou peste 15 minute.", "error")
+            username = request.form.get("username", "").strip()
+            wait = auth.login_wait_seconds(ip, username)
+            if wait:
+                flash(f"Prea multe parole greșite. Poți încerca din nou peste {-(-wait // 60)} minute.", "error")
                 return render_template("login.html"), 429
-            user = auth.authenticate(request.form.get("username", "").strip(),
-                                     request.form.get("password", ""))
+            user = auth.authenticate(username, request.form.get("password", ""))
             if user is None:
-                auth.record_failed_login(ip)
-                flash("Utilizator sau parolă greșită.", "error")
+                left = auth.record_failed_login(ip, username)
+                if left:
+                    flash(f"Utilizator sau parolă greșită. Mai ai {left} "
+                          f"{'încercare' if left == 1 else 'încercări'}, apoi accesul se blochează "
+                          f"{config.LOGIN_LOCKOUT_MINUTES} minute.", "error")
+                else:
+                    flash(f"Prea multe parole greșite. Accesul e blocat {config.LOGIN_LOCKOUT_MINUTES} minute.", "error")
                 return render_template("login.html"), 401
+            auth.clear_failed_logins(ip, username)
             session.clear()
             session.permanent = True
             session["user_id"] = user["id"]
