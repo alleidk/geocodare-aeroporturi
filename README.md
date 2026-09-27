@@ -57,14 +57,19 @@ Site-ul are nevoie de un server care rulează încontinuu și de un **disc persi
 (altfel se pierd conturile, fișierele și cache-ul la fiecare repornire). Merge cu `Dockerfile`-ul din repo pe
 orice VPS cu Docker sau pe platforme ca Railway / Fly.io / Render (cu volum persistent).
 
+Cel mai simplu, cu `docker-compose.yml` (site + Caddy, care face singur HTTPS pentru domeniu):
+
 ```bash
-docker build -t geocodare-web .
-docker run -d --restart unless-stopped -p 8000:8000 -v geocodare-data:/data \
-  -e GOOGLE_API_KEY=... -e ADMIN_PASSWORD=... geocodare-web
+git clone https://github.com/alleidk/geocodare-aeroporturi.git && cd geocodare-aeroporturi
+printf 'DOMAIN=geocodare.exemplu.ro\nGOOGLE_API_KEY=...\nADMIN_PASSWORD=...\n' > .env
+docker compose up -d --build
 ```
 
-- Pune în fața lui un reverse proxy cu **HTTPS** (Caddy, nginx, Traefik sau HTTPS-ul platformei) și îndreaptă domeniul
-  spre el. Imaginea Docker are `COOKIE_SECURE=1`, deci login-ul funcționează doar prin HTTPS.
+Domeniul trebuie să aibă un record DNS `A` spre IP-ul serverului, iar porturile 80 și 443 trebuie să fie deschise.
+Actualizare după modificări în cod: `git pull && docker compose up -d --build`.
+
+- Fără `docker compose`, pune în fața containerului un reverse proxy cu **HTTPS**. Imaginea Docker are
+  `COOKIE_SECURE=1`, deci login-ul funcționează doar prin HTTPS.
 - Un singur proces (`python -m web`) — geocodarea rulează într-un fir din interiorul lui; nu porni mai multe copii pe același `/data`.
 - Pentru fișiere mari (~25 MB, ~1.000 de coloane) serverul are nevoie de ~1,5–2 GB RAM în timpul procesării.
 - Cheia Google stă doar pe server; nu ajunge niciodată în browser.
@@ -130,6 +135,7 @@ Adresele care par să conțină două locuri (ex. „colț cu…”, „;”) su
 geocodare_od.py      scriptul + normalizarea și geocoderul Google (folosite și de site)
 web/                 site-ul (Flask): app.py rute, geocoding.py procesare Excel, worker.py coada de joburi
 Dockerfile           imaginea pentru server
+docker-compose.yml   site + Caddy (HTTPS) pe server; Caddyfile = configurarea Caddy
 requirements.txt     dependențe Python
 data/                datele site-ului (ignorat de git)
 ```
